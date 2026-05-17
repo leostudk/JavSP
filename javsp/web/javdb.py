@@ -25,6 +25,17 @@ else:
     base_url = str(Cfg().network.proxy_free[CrawlerID.javdb])
 
 
+def _parse_cookie_string(cookie_str):
+    """解析 'key1=val1; key2=val2' 格式的Cookie字符串为字典"""
+    cookie_dict = {}
+    for item in cookie_str.split(';'):
+        item = item.strip()
+        if '=' in item:
+            key, value = item.split('=', 1)
+            cookie_dict[key.strip()] = value.strip()
+    return cookie_dict
+
+
 def get_html_wrapper(url):
     """包装外发的request请求并负责转换为可xpath的html，同时处理Cookies无效等问题"""
     global request, cookies_pool
@@ -44,11 +55,20 @@ def get_html_wrapper(url):
                     cookies_pool = []
             if len(cookies_pool) > 0:
                 item = cookies_pool.pop()
-                # 更换Cookies时需要创建新的request实例，否则cloudscraper会保留它内部第一次发起网络访问时获得的Cookies
+                # 更换Cookies时需要创建新的request实例，否则scraper会保留它内部第一次发起网络访问时获得的Cookies
                 request = Request(use_scraper=True)
                 request.cookies = item['cookies']
+                if request.scraper:
+                    request.scraper.cookies.update(request.cookies)
                 cookies_source = (item['profile'], item['site'])
                 logger.debug(f'未携带有效Cookies而发生重定向，尝试更换Cookies为: {cookies_source}')
+                return get_html_wrapper(url)
+            elif cfg_cookie := Cfg().crawler.javdb_cookie:
+                logger.debug('浏览器Cookies无效，尝试使用配置中的手动Cookie')
+                request = Request(use_scraper=True)
+                request.cookies = _parse_cookie_string(cfg_cookie)
+                if request.scraper:
+                    request.scraper.cookies.update(request.cookies)
                 return get_html_wrapper(url)
             else:
                 raise CredentialError('JavDB: 所有浏览器Cookies均已过期')
@@ -77,6 +97,8 @@ def get_user_info(site, cookies):
     """获取cookies对应的JavDB用户信息"""
     try:
         request.cookies = cookies
+        if request.scraper:
+            request.scraper.cookies.update(request.cookies)
         html = request.get_html(f'https://{site}/users/profile')
     except Exception as e:
         logger.info('JavDB: 获取用户信息时出错')
