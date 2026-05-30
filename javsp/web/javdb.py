@@ -57,6 +57,7 @@ def get_html_wrapper(url):
                 item = cookies_pool.pop()
                 # 更换Cookies时需要创建新的request实例，否则scraper会保留它内部第一次发起网络访问时获得的Cookies
                 request = Request(use_scraper=True)
+                request.proxies = {}  # JavDB直连不走代理
                 request.cookies = item['cookies']
                 if request.scraper:
                     request.scraper.cookies.update(request.cookies)
@@ -66,6 +67,7 @@ def get_html_wrapper(url):
             elif cfg_cookie := Cfg().crawler.javdb_cookie:
                 logger.debug('浏览器Cookies无效，尝试使用配置中的手动Cookie')
                 request = Request(use_scraper=True)
+                request.proxies = {}  # JavDB直连不走代理
                 request.cookies = _parse_cookie_string(cfg_cookie)
                 if request.scraper:
                     request.scraper.cookies.update(request.cookies)
@@ -136,24 +138,24 @@ def parse_data(movie: MovieInfo):
     match_count = len([i for i in ids if i == movie.dvdid.lower()])
     if match_count == 0:
         raise MovieNotFoundError(__name__, movie.dvdid, ids)
-    elif match_count == 1:
-        index = ids.index(movie.dvdid.lower())
-        new_url = movie_urls[index]
-        try:
-            html2 = get_html_wrapper(new_url)
-        except (SitePermissionError, CredentialError):
-            # 不开VIP不让看，过分。决定榨出能获得的信息，毕竟有时候只有这里能找到标题和封面
-            box = html.xpath("//a[@class='box']")[index]
-            movie.url = new_url
-            movie.title = box.get('title')
-            movie.cover = box.xpath("div/img/@src")[0]
-            score_str = box.xpath("div[@class='score']/span/span")[0].tail
-            score = re.search(r'([\d.]+)分', score_str).group(1)
-            movie.score = "{:.2f}".format(float(score)*2)
-            movie.publish_date = box.xpath("div[@class='meta']/text()")[0].strip()
-            return
-    else:
-        raise MovieDuplicateError(__name__, movie.dvdid, match_count)
+    if match_count > 1:
+        logger.warning(f'JavDB: {movie.dvdid} 有 {match_count} 个重复搜索结果，使用第一个')
+
+    index = ids.index(movie.dvdid.lower())
+    new_url = movie_urls[index]
+    try:
+        html2 = get_html_wrapper(new_url)
+    except (SitePermissionError, CredentialError):
+        # 不开VIP不让看，过分。决定榨出能获得的信息，毕竟有时候只有这里能找到标题和封面
+        box = html.xpath("//a[@class='box']")[index]
+        movie.url = new_url
+        movie.title = box.get('title')
+        movie.cover = box.xpath("div/img/@src")[0]
+        score_str = box.xpath("div[@class='score']/span/span")[0].tail
+        score = re.search(r'([\d.]+)分', score_str).group(1)
+        movie.score = "{:.2f}".format(float(score)*2)
+        movie.publish_date = box.xpath("div[@class='meta']/text()")[0].strip()
+        return
 
     container = html2.xpath("/html/body/section/div/div[@class='video-detail']")[0]
     info = container.xpath("//nav[@class='panel movie-panel-info']")[0]
